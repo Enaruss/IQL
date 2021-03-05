@@ -12,8 +12,11 @@ import iql.common.utils.ZkUtils;
 import iql.web.bean.DataSource;
 import iql.web.iql.service.DataSourceRepository;
 import iql.web.system.domain.User;
+import iql.web.transport.AkkaConfig;
 import org.I0Itec.zkclient.ZkClient;
+import org.apache.commons.lang3.RandomUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import scala.collection.Seq;
@@ -29,11 +32,13 @@ import java.util.List;
 @RestController
 @RequestMapping("/auth")
 public class AuthAction {
-
+    @Autowired
+    private AkkaConfig akkaConfig;
     @Autowired
     private ActorSystem actorSystem;
     @Autowired
     private ZkClient zkClient;
+
 
     @Autowired
     private DataSourceRepository dataSourceRepository;
@@ -80,12 +85,18 @@ public class AuthAction {
         JSONObject resultObj = new JSONObject();
         resultObj.put("isSuccess", false);
         Seq<String> validEngines = ZkUtils.getValidChildren(zkClient, ZkUtils.validEnginePath(), "");
-        if (validEngines.size() == 0) {
+        if (validEngines.size() == 0 && !Boolean.parseBoolean(akkaConfig.getStandAlone())) {
             resultObj.put("errorMessage", "There is no available execution engine....");
             return resultObj;
         } else {
-            String[] engineInfoAndActorname = validEngines.head().split("_");
-            ActorSelection selection = actorSystem.actorSelection("akka.tcp://iqlSystem@" + engineInfoAndActorname[0] + "/user/" + engineInfoAndActorname[1]);
+            ActorSelection selection;
+            if (!Boolean.parseBoolean(akkaConfig.getStandAlone())) {
+                String[] engineInfoAndActorname = validEngines.head().split("_");
+                selection = actorSystem.actorSelection("akka.tcp://iqlSystem@" + engineInfoAndActorname[0] + "/user/" + engineInfoAndActorname[1]);
+            } else {
+                selection = actorSystem.actorSelection("akka.tcp://iqlSystem@" + "localhost:18889" + "/user/" + "actor" + RandomUtils.nextInt(1, 3));
+            }
+
             try {
                 Timeout timeout = new Timeout(Duration.create(2, "s"));
                 Future<Object> future1 = Patterns.ask(selection, message, timeout);

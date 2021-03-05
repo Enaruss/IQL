@@ -1,5 +1,6 @@
 package iql.web.iql.action;
 
+import com.google.common.collect.Lists;
 import iql.common.domain.Bean;
 import iql.common.utils.ShellUtils;
 import iql.common.utils.ZkUtils;
@@ -8,6 +9,7 @@ import iql.web.bean.IqlExcution;
 import iql.web.handler.HDFSHandler;
 import iql.web.system.domain.User;
 import iql.web.system.service.UserService;
+import iql.web.transport.AkkaConfig;
 import iql.web.util.ActorUtils;
 import iql.web.util.DataUtil;
 import iql.web.util.HdfsUtils;
@@ -18,13 +20,16 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import iql.web.util.MD5Util;
 import org.I0Itec.zkclient.ZkClient;
+import org.apache.commons.lang3.RandomUtils;
 import org.apache.http.client.fluent.Form;
 import org.apache.http.client.fluent.Request;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.web.bind.annotation.*;
+import scala.Array;
 import scala.collection.JavaConversions;
 import scala.collection.Seq;
+import scala.collection.mutable.MutableList;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -43,6 +48,8 @@ public class QueryAction {
     private ZkClient zkClient;
     @Autowired
     private IqlExcutionRepository iqlExcutionRepository;
+    @Autowired
+    private AkkaConfig akkaConfig;
     @Autowired
     private ActorUtils actorUtils;
     @Autowired
@@ -67,7 +74,10 @@ public class QueryAction {
             user = userService.findUserByToken(request.getSession().getAttribute("token").toString());
         }
 
-        Seq<String> validEngines = ZkUtils.getValidChildren(zkClient, ZkUtils.validEnginePath(), tag);
+        Seq<String> validEngines =
+                !Boolean.parseBoolean(akkaConfig.getStandAlone())
+                        ? ZkUtils.getValidChildren(zkClient, ZkUtils.validEnginePath(), tag)
+                        : new MutableList<String>().$plus$eq(akkaConfig.getStandAloneActorPath()).toSeq();
         if (validEngines.size() == 0) {
             resultObj.put("data", "There is no available execution engine....");
             return resultObj;
@@ -155,7 +165,12 @@ public class QueryAction {
     public JSONObject getActtiveStreams() {
         JSONObject res = new JSONObject();
         JSONArray validStreams = new JSONArray();
-        List<String> validEngines = JavaConversions.seqAsJavaList(ZkUtils.getChildren(zkClient, ZkUtils.validEnginePath()));
+        List<String> validEngines = Lists.newArrayList();
+        if (!Boolean.parseBoolean(akkaConfig.getStandAlone())) {
+            validEngines.addAll(JavaConversions.seqAsJavaList(ZkUtils.getChildren(zkClient, ZkUtils.validEnginePath())));
+        } else {
+            validEngines.add(akkaConfig.getStandAloneActorPath());
+        }
         if (validEngines.size() == 0) {
             return null;
         } else {
@@ -272,7 +287,8 @@ public class QueryAction {
     }
 
     @RequestMapping(value = "/fileDownload", method = RequestMethod.GET)
-    public void fileDownload(HttpServletResponse response, String hdfsPath, String schema, String sql, String fileType) throws Exception {
+    public void fileDownload(HttpServletResponse response, String hdfsPath, String schema, String sql, String
+            fileType) throws Exception {
         if ("json".equals(fileType)) {
             HDFSHandler.downloadJSON(hdfsPath, response, env.getProperty("hdfs.uri"));
         } else if ("csv".equals(fileType)) {
@@ -289,18 +305,28 @@ public class QueryAction {
     @ResponseBody
     public JSONArray hiveMetadata() {
         JSONArray resultArray = new JSONArray();
-        Seq<String> validEngines = ZkUtils.getChildren(zkClient, ZkUtils.validEnginePath());
-        if (validEngines.size() == 0) {
-            return resultArray;
-        } else {
-            String[] engineInfoAndActorname = validEngines.head().split("_");
-            JSONObject resultObj = actorUtils.queryActor(engineInfoAndActorname[0], engineInfoAndActorname[1],
-                    new Bean.HiveCatalog());
-            if (resultObj.getBoolean("isSuccess")) {
-                resultArray = JSON.parseArray(resultObj.getString("data"));
+        JSONObject resultObj = null;
+
+        if (!Boolean.parseBoolean(akkaConfig.getStandAlone())) {
+            Seq<String> validEngines = ZkUtils.getChildren(zkClient, ZkUtils.validEnginePath());
+            if (validEngines.size() == 0) {
+                return null;
+            } else {
+                String[] engineInfoAndActorName = validEngines.head().split("_");
+
+                resultObj = actorUtils.queryActor(engineInfoAndActorName[0], engineInfoAndActorName[1],
+                        new Bean.HiveCatalogWithAutoComplete());
             }
-            return resultArray;
+        } else {
+            resultObj = actorUtils.queryActor("127.0.0.1:18889",
+                    "actor" + RandomUtils.nextInt(1, 3),
+                    new Bean.HiveCatalog());
         }
+
+        if (resultObj.getBoolean("isSuccess")) {
+            resultArray = JSON.parseArray(resultObj.getString("data"));
+        }
+        return resultArray;
     }
 
     /**
@@ -310,19 +336,27 @@ public class QueryAction {
     @ResponseBody
     public JSONObject autoCompleteHiveMetadata() {
         JSONObject resultObj = null;
-        Seq<String> validEngines = ZkUtils.getChildren(zkClient, ZkUtils.validEnginePath());
-        if (validEngines.size() == 0) {
-            return null;
-        } else {
-            String[] engineInfoAndActorname = validEngines.head().split("_");
 
-            resultObj = actorUtils.queryActor(engineInfoAndActorname[0], engineInfoAndActorname[1],
-                    new Bean.HiveCatalogWithAutoComplete());
-            if (resultObj.getBoolean("isSuccess")) {
-                resultObj = JSON.parseObject(resultObj.getString("data"));
+        if (!Boolean.parseBoolean(akkaConfig.getStandAlone())) {
+            Seq<String> validEngines = ZkUtils.getChildren(zkClient, ZkUtils.validEnginePath());
+            if (validEngines.size() == 0) {
+                return null;
+            } else {
+                String[] engineInfoAndActorName = validEngines.head().split("_");
+
+                resultObj = actorUtils.queryActor(engineInfoAndActorName[0], engineInfoAndActorName[1],
+                        new Bean.HiveCatalogWithAutoComplete());
             }
-            return resultObj;
+        } else {
+            resultObj = actorUtils.queryActor("127.0.0.1:18889",
+                    "actor" + RandomUtils.nextInt(1, 3),
+                    new Bean.HiveCatalogWithAutoComplete());
         }
+
+        if (resultObj.getBoolean("isSuccess")) {
+            resultObj = JSON.parseObject(resultObj.getString("data"));
+        }
+        return resultObj;
     }
 
     /**
@@ -369,10 +403,11 @@ public class QueryAction {
     @RequestMapping(value = "/shareResult", method = RequestMethod.POST)
     @ResponseBody
     public JSONObject shareResult(String id) {
-        String sign = getRealSign(id);;
-        String getUrl = getUrl(id,sign);
+        String sign = getRealSign(id);
+        ;
+        String getUrl = getUrl(id, sign);
         JSONObject jsonObject = new JSONObject();
-        jsonObject.put("urlSign",getUrl);
+        jsonObject.put("urlSign", getUrl);
         return jsonObject;
     }
 
@@ -389,7 +424,7 @@ public class QueryAction {
         String realSign = getRealSign(id);
 
         JSONObject resultObj = new JSONObject();
-        if(realSign.equals(sign)){
+        if (realSign.equals(sign)) {
             IqlExcution iqlExcution = iqlExcutionRepository.findOne(Long.valueOf(id));
             String dataType = iqlExcution.getDataType();
             try {
@@ -413,7 +448,7 @@ public class QueryAction {
         return resultObj;
     }
 
-    private String getRealSign(String jobid){
+    private String getRealSign(String jobid) {
         IqlExcution iqlExcution = iqlExcutionRepository.findOne(Long.valueOf(jobid));
         String userName = iqlExcution.getUser();
         User user = new User();
@@ -422,11 +457,10 @@ public class QueryAction {
     }
 
 
-
     /**
      * 功能：拼接URL
      */
-    private String getUrl(String id,String sign){
+    private String getUrl(String id, String sign) {
         InetAddress addr = null;
         try {
             addr = InetAddress.getLocalHost();
@@ -435,7 +469,7 @@ public class QueryAction {
         }
 
         addr.getHostAddress();
-        String urlSign = addr.getHostAddress()+":" + env.getProperty("server.port") + "/share?id="+id + "&sign=" + sign;
+        String urlSign = addr.getHostAddress() + ":" + env.getProperty("server.port") + "/share?id=" + id + "&sign=" + sign;
         return urlSign;
     }
 

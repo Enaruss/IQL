@@ -28,27 +28,27 @@ public class AkkaUtils {
         Iterator<Bean.IQLEngine> iterator = allEngineInCluster.iterator();
         List ids = new ArrayList<Integer>();
         List ports = new ArrayList<Integer>();
-        while (iterator.hasNext()){
+        while (iterator.hasNext()) {
             Bean.IQLEngine engine = iterator.next();
             ids.add(engine.engineId());
-            if(engine.engineInfo().contains(ip)){
+            if (engine.engineInfo().contains(ip)) {
                 ports.add(Integer.valueOf(engine.engineInfo().split(":")[1]));
             }
         }
         Integer port = 2550;
-        if(ports.size() != 0){
-            while (ports.contains(port)){
+        if (ports.size() != 0) {
+            while (ports.contains(port)) {
                 port += 1;
             }
         }
         Integer id = 1;
-        if(ids.size() != 0) {
-            while (ids.contains(id)){
+        if (ids.size() != 0) {
+            while (ids.contains(id)) {
                 id += 1;
             }
         }
 
-        ZkUtils.registerEngineInZk(zkClient,id,ip,port,6000,-1);
+        ZkUtils.registerEngineInZk(zkClient, id, ip, port, 6000, -1);
 
         Config config = ConfigFactory.parseString("akka.remote.netty.tcp.port=" + port)
                 .withFallback(ConfigFactory.parseString("akka.actor.provider=akka.remote.RemoteActorRefProvider"))
@@ -59,4 +59,20 @@ public class AkkaUtils {
         return config;
     }
 
+
+    public static Config getStandAloneConfig() {
+        return ConfigFactory.parseString("akka.remote.netty.tcp.port=" + 18889)
+                .withFallback(ConfigFactory.parseString("akka.actor.provider=akka.remote.RemoteActorRefProvider"))
+                .withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname=" + "localhost"))
+                .withFallback(
+                        ConfigFactory.load());
+    }
+
+    public static Config getWebStandAloneConfig() {
+        return ConfigFactory.parseString("akka.remote.netty.tcp.port=" + 18888)
+                .withFallback(ConfigFactory.parseString("akka.actor.provider=akka.remote.RemoteActorRefProvider"))
+                .withFallback(ConfigFactory.parseString("akka.remote.netty.tcp.hostname=" + "localhost"))
+                .withFallback(
+                        ConfigFactory.load());
+    }
 }

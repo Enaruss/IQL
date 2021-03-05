@@ -25,7 +25,7 @@ package object config {
 	val MAIL_ENABLE = ConfigBuilder("spark.mail.enable")
 		.doc("是否启用邮件通知")
 		.booleanConf
-		.createWithDefault(true)
+		.createWithDefault(false)
 
 	val STREAMJOB_MAXATTRPTS = ConfigBuilder("spark.streamJobMaxAttempts")
 		.doc("实时任务失败重启次数")

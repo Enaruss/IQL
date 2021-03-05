@@ -9,6 +9,7 @@ import iql.engine.repl.SparkInterpreter
 import iql.engine.utils.PropsUtils
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.util.StringUtils
 
 object IqlMain extends Logging {
 
@@ -25,7 +26,7 @@ object IqlMain extends Logging {
         case "-iql.engine.tag" :: value :: tail =>
           argsMap += ("iql.engine.tag" -> value)
           argv = tail
-        case Nil =>
+        case Nil  =>
         case tail =>
           // scalastyle:off println
           System.err.println(s"Unrecognized options: ${tail.mkString(" ")}")
@@ -35,8 +36,7 @@ object IqlMain extends Logging {
   }
 
   def createSpark(sparkConf: SparkConf) = {
-    val spark = SparkSession
-      .builder
+    val spark = SparkSession.builder
       .appName("IQL")
       .config(sparkConf)
       //动态资源调整
@@ -51,7 +51,7 @@ object IqlMain extends Logging {
       //调度模式
       .config("spark.scheduler.mode", "FAIR")
       .config("spark.executor.memoryOverhead", "512")
-//      .master("local[*]")
+      .master("local[*]")
       .enableHiveSupport()
       .getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
@@ -64,16 +64,28 @@ object IqlMain extends Logging {
 
     val interpreter = new SparkInterpreter()
     val sparkConf = interpreter.start()
-
-    val actorConf = AkkaUtils.getConfig(ZkUtils.getZkClient(argsMap.getOrElse("zkServers", PropsUtils.get("zkServers"))))
+    val zkServers =
+      argsMap.getOrElse("zkServers", PropsUtils.getOrNull("zkServers"))
+    val actorConf =
+      if (zkServers == null || zkServers.isEmpty) AkkaUtils getStandAloneConfig
+      else AkkaUtils getConfig ZkUtils.getZkClient(zkServers)
     val hostname = actorConf.getString("akka.remote.netty.tcp.hostname")
     val port = actorConf.getString("akka.remote.netty.tcp.port")
 
-    val iqlSession = new IQLSession(hostname + ":" + port, argsMap.get("iql.engine.tag"))
+    val iqlSession =
+      new IQLSession(hostname + ":" + port, argsMap.get("iql.engine.tag"))
 
     val actorSystem = ActorSystem("iqlSystem", actorConf)
-    (1 to sparkConf.getInt(IQL_PARALLELISM.key, IQL_PARALLELISM.defaultValue.get))
-      .foreach(id => actorSystem.actorOf(ExeActor.props(interpreter, iqlSession, sparkConf), name = s"actor$id"))
+    (1 to sparkConf.getInt(
+      IQL_PARALLELISM.key,
+      IQL_PARALLELISM.defaultValue.get
+    )).foreach(
+      id =>
+        actorSystem.actorOf(
+          ExeActor.props(interpreter, iqlSession, sparkConf),
+          name = s"actor$id"
+      )
+    )
 
     iqlSession.awaitTermination()
   }
